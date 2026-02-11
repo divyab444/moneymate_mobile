@@ -1,4 +1,4 @@
-import React, { useState, useCallback ,useEffect} from "react";
+import React, { useState, useEffect } from "react";
 import {
   View,
   Text,
@@ -8,45 +8,88 @@ import {
   StatusBar,
   Platform,
   Alert,
-  Share
+  Share,
 } from "react-native";
 import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import { useFocusEffect } from "@react-navigation/native";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import * as FileSystem from "expo-file-system/legacy";
 import * as Sharing from "expo-sharing";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import Toast from "react-native-toast-message";
 import * as Haptics from "expo-haptics";
-import * as Linking from "expo-linking";
-import { listenToWallet } from "../storage/db";
-const STORAGE_KEY = "MONEY_MATE_DB";
+import {
+  deleteMonthFromWallet,
+  listenToWallet,
+  updateWallet,
+} from "../storage/db";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import * as Clipboard from "expo-clipboard";
 
 const DashboardScreen = ({ navigation }) => {
-  const [data, setData] = useState([]);
-
+  const [monthsData, setMonthsData] = useState({});
 
   useEffect(() => {
-  let unsubscribe;
+    let unsubscribe;
 
-  const start = async () => {
-    unsubscribe = await listenToWallet((data) => {
-      setData(data.months || {});
+    const start = async () => {
+      unsubscribe = await listenToWallet((wallet) => {
+        setMonthsData(wallet.months || {});
+      });
+    };
+
+    start();
+
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, []);
+
+  const monthMap = {
+    January: 0,
+    February: 1,
+    March: 2,
+    April: 3,
+    May: 4,
+    June: 5,
+    July: 6,
+    August: 7,
+    September: 8,
+    October: 9,
+    November: 10,
+    December: 11,
+  };
+
+  const dashboardData = Object.keys(monthsData)
+    .sort((a, b) => {
+      const [mA, yA] = a.split(" ");
+      const [mB, yB] = b.split(" ");
+
+      return new Date(yB, monthMap[mB]) - new Date(yA, monthMap[mA]);
+    })
+    .map((month) => {
+      const income = Number(monthsData[month].income || 0);
+      const transactions = monthsData[month].transactions || [];
+
+      const expense = transactions
+        .filter((t) => t.type === "expense")
+        .reduce((s, t) => s + Number(t.amount), 0);
+
+      return {
+        id: month,
+        month,
+        income,
+        expense,
+        extra: income - expense,
+      };
     });
+
+  const goToJoinWallet = async () => {
+    navigation.navigate("JoinWalletScreen");
   };
 
-  start();
-
-  return () => {
-    if (unsubscribe) unsubscribe();
-  };
-}, []);
-
-  const deleteMonth = async (monthName) => {
-  
+  const deleteMonth = (monthName) => {
     Alert.alert(
       "Delete Month",
       `Are you sure you want to delete ${monthName}?`,
@@ -56,104 +99,19 @@ const DashboardScreen = ({ navigation }) => {
           text: "Delete",
           style: "destructive",
           onPress: async () => {
-            const json = await AsyncStorage.getItem(STORAGE_KEY);
-            if (!json) return;
+            await deleteMonthFromWallet(monthName);
 
-            const db = JSON.parse(json);
-
-            // 🔥 delete full month data
-            delete db.months[monthName];
-
-            await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-
-            // reload dashboard
-            loadDashboard();
             Toast.show({
-              type: "error",
-              text1: "Your Transaction was deleted succesfully!",
+              type: "success",
+              text1: "Month deleted successfully",
             });
+
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           },
         },
       ],
     );
   };
-  
-const generateInviteLink = async () => {
-  const walletId = await AsyncStorage.getItem("CURRENT_WALLET_ID");
-  console.log("🚀 ~ DashboardScreen.js:66 ~ walletId:", walletId)
-
-
-  if (!walletId) return;
-
-  const link = `moneymate://join?wallet=${walletId}`;
-  console.log("🚀 ~ DashboardScreen.js:72 ~ link:", link)
-
-  await Share.share({
-    message: `Join my MoneyMate wallet 💰\n\n${link}`,
-  });
-};
-
-  const loadDashboard = async () => {
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
-    if (!json) {
-      setData([]);
-      return;
-    }
-
-    const db = JSON.parse(json);
-    const months = db.months || {};
-
-    const monthMap = {
-      January: 0,
-      February: 1,
-      March: 2,
-      April: 3,
-      May: 4,
-      June: 5,
-      July: 6,
-      August: 7,
-      September: 8,
-      October: 9,
-      November: 10,
-      December: 11,
-    };
-
-    const result = Object.keys(months)
-      .sort((a, b) => {
-        const [monthA, yearA] = a.split(" ");
-        const [monthB, yearB] = b.split(" ");
-
-        const dateA = new Date(Number(yearA), monthMap[monthA]);
-        const dateB = new Date(Number(yearB), monthMap[monthB]);
-
-        return dateB - dateA; // Latest first
-      })
-      .map((month) => {
-        const transactions = months[month].transactions || [];
-        const income = Number(months[month].income || 0);
-
-        const expense = transactions
-          .filter((t) => t.type === "expense")
-          .reduce((sum, t) => sum + Number(t.amount), 0);
-
-        return {
-          id: month,
-          month,
-          income,
-          expence: expense,
-          extra: income - expense,
-        };
-      });
-
-    setData(result);
-  };
-
-  useFocusEffect(
-    useCallback(() => {
-      loadDashboard();
-    }, []),
-  );
 
   const GlassView = ({ children, style, intensity = 70 }) => {
     if (Platform.OS === "android") {
@@ -177,10 +135,8 @@ const generateInviteLink = async () => {
     return (
       <TouchableOpacity
         onPress={() => {
-          (navigation.navigate("TransactionScreen", {
-            month: item.month,
-          }),
-            Haptics.selectionAsync());
+          navigation.navigate("TransactionScreen", { month: item.month });
+          Haptics.selectionAsync();
         }}
       >
         <GlassView intensity={70} style={styles.card}>
@@ -231,7 +187,7 @@ const generateInviteLink = async () => {
                   fontFamily: "MontserratBold",
                 }}
               >
-                ₹ {Number(item.expence).toLocaleString("en-IN")}
+                ₹ {Number(item.expense).toLocaleString("en-IN")}
               </Text>
             </View>
 
@@ -257,15 +213,10 @@ const generateInviteLink = async () => {
   const generatePDF = async () => {
     try {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      const json = await AsyncStorage.getItem(STORAGE_KEY);
-      if (!json) return;
-
-      const db = JSON.parse(json);
-      const months = db.months || {};
 
       const pdfDoc = await PDFDocument.create();
       const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-      const boldFont = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
+      const bold = await pdfDoc.embedFont(StandardFonts.HelveticaBold);
 
       let page = pdfDoc.addPage();
       let { width, height } = page.getSize();
@@ -273,356 +224,320 @@ const generateInviteLink = async () => {
       const margin = 50;
       let y = height - margin;
 
-      const addPage = () => {
-        page = pdfDoc.addPage();
-        const size = page.getSize();
-        width = size.width;
-        height = size.height;
-        y = height - margin;
+      /* ================= HELPERS ================= */
 
-        drawDarkBackground();
-      };
-
-      const drawDarkBackground = () => {
+      const bg = () => {
         page.drawRectangle({
           x: 0,
           y: 0,
-          width: width,
-          height: height,
-          color: rgb(0.05, 0.05, 0.08),
+          width,
+          height,
+          color: rgb(0, 0, 0),
         });
       };
 
-      const rightAlign = (text, size = 11) => {
-        const textWidth = font.widthOfTextAtSize(text, size);
-        return width - margin - textWidth;
+      const newPage = () => {
+        page = pdfDoc.addPage();
+        ({ width, height } = page.getSize());
+        y = height - margin;
+        bg();
       };
 
-      const drawDivider = () => {
+      const space = (need = 24) => {
+        if (y < margin + need) newPage();
+      };
+
+      const right = (text, size = 11) =>
+        width - margin - font.widthOfTextAtSize(text, size);
+
+      const divider = () => {
+        space(20);
         page.drawLine({
           start: { x: margin, y },
           end: { x: width - margin, y },
-          thickness: 0.6,
-          color: rgb(0.25, 0.25, 0.3),
+          thickness: 1,
+          color: rgb(0.3, 0.3, 0.3),
         });
         y -= 18;
       };
 
-      const drawSectionCard = (title) => {
-        if (y < 120) addPage();
+      bg();
 
-        page.drawRectangle({
-          x: margin - 15,
-          y: y - 35,
-          width: width - (margin - 15) * 2,
-          height: 45,
-          color: rgb(0.12, 0.12, 0.18),
-        });
+      /* ================= HEADER ================= */
 
-        page.drawText(title, {
-          x: margin,
-          y: y - 15,
-          size: 14,
-          font: boldFont,
-          color: rgb(1, 1, 1),
-        });
-
-        y -= 60;
-      };
-
-      // Draw first page background
-      drawDarkBackground();
-
-      // ===== HEADER =====
       page.drawText("MoneyMate", {
         x: margin,
         y,
-        size: 26,
-        font: boldFont,
+        size: 28,
+        font: bold,
         color: rgb(1, 1, 1),
       });
 
-      y -= 30;
+      y -= 32;
 
-      page.drawText("Premium Financial Report", {
+      page.drawText("Expense Report", {
         x: margin,
         y,
-        size: 12,
+        size: 14,
         font,
-        color: rgb(0.7, 0.7, 0.8),
+        color: rgb(0.7, 0.7, 0.7),
       });
 
-      page.drawText("Generated: " + new Date().toLocaleDateString(), {
-        x: rightAlign("Generated: " + new Date().toLocaleDateString(), 10),
+      const dateTxt = new Date().toDateString();
+      page.drawText(dateTxt, {
+        x: right(dateTxt, 10),
         y,
         size: 10,
         font,
-        color: rgb(0.6, 0.6, 0.7),
+        color: rgb(0.6, 0.6, 0.6),
       });
 
       y -= 40;
 
-      let grandIncome = 0;
-      let grandExpense = 0;
-      let globalCategoryTotals = {};
+      /* ================= DATA ================= */
 
-      Object.keys(months).forEach((month) => {
-        const income = Number(months[month].income || 0);
-        const transactions = months[month].transactions || [];
+      let totalIncome = 0;
+      let totalExpense = 0;
+      const categoryTotals = {};
 
-        let monthExpense = 0;
-        grandIncome += income;
+      for (const month of Object.keys(monthsData)) {
+        const { income = 0, transactions = [] } = monthsData[month];
+        totalIncome += Number(income);
 
-        drawSectionCard(month);
+        space(140);
+
+        /* ===== MONTH START DIVIDER ===== */
+        divider();
+
+        /* ===== MONTH CARD ===== */
+        page.drawRectangle({
+          x: margin - 15,
+          y: y - 35,
+          width: width - (margin - 15) * 2,
+          height: 42,
+          color: rgb(0.12, 0.12, 0.12),
+        });
+
+        page.drawText(month.toUpperCase(), {
+          x: margin,
+          y: y - 22,
+          size: 16,
+          font: bold,
+          color: rgb(1, 1, 1),
+        });
+
+        y -= 60;
 
         const grouped = {};
-
         transactions.forEach((t) => {
-          if (!grouped[t.category]) grouped[t.category] = [];
+          grouped[t.category] ??= [];
           grouped[t.category].push(t);
         });
 
-        Object.keys(grouped).forEach((category) => {
-          let categoryTotal = 0;
+        let monthExpense = 0;
 
-          page.drawText(category, {
+        for (const cat of Object.keys(grouped)) {
+          space(60);
+
+          /* CATEGORY (YELLOW) */
+          page.drawText(cat, {
             x: margin,
             y,
-            size: 12,
-            font: boldFont,
-            color: rgb(0.8, 0.8, 0.9),
+            size: 13,
+            font: bold,
+            color: rgb(1, 0.85, 0.3),
           });
 
-          y -= 18;
+          y -= 16;
 
-          grouped[category].forEach((item) => {
-            const amount = Number(item.amount);
-            monthExpense += amount;
+          let catTotal = 0;
 
-            if (!globalCategoryTotals[category])
-              globalCategoryTotals[category] = 0;
+          for (const t of grouped[cat]) {
+            space(22);
 
-            globalCategoryTotals[category] += amount;
-            categoryTotal += amount;
+            const amt = Number(t.amount);
+            catTotal += amt;
+            monthExpense += amt;
+            categoryTotals[cat] = (categoryTotals[cat] || 0) + amt;
 
-            page.drawText(item.title, {
+            page.drawText(t.title, {
               x: margin + 10,
               y,
               size: 11,
               font,
-              color: rgb(0.85, 0.85, 0.9),
+              color: rgb(0.85, 0.85, 0.85),
             });
 
-            const amountText = "Rs. " + amount.toLocaleString("en-IN");
-
-            page.drawText(amountText, {
-              x: rightAlign(amountText),
+            const amtText = `Rs. ${amt.toLocaleString("en-IN")}`;
+            page.drawText(amtText, {
+              x: right(amtText),
               y,
               size: 11,
               font,
               color: rgb(1, 1, 1),
             });
 
-            y -= 18;
-          });
+            y -= 16;
+          }
 
-          const subtotalText = "Rs. " + categoryTotal.toLocaleString("en-IN");
-
-          page.drawText("Subtotal", {
+          /* SUBTOTAL (BLUE) */
+          y -= 4;
+          page.drawText(`Subtotal  Rs. ${catTotal.toLocaleString("en-IN")}`, {
             x: margin + 10,
             y,
             size: 11,
-            font: boldFont,
-            color: rgb(0.6, 0.6, 0.7),
+            font: bold,
+            color: rgb(0.4, 0.7, 1),
           });
 
-          page.drawText(subtotalText, {
-            x: rightAlign(subtotalText),
+          y -= 26;
+        }
+
+        totalExpense += monthExpense;
+
+        /* ===== MONTH SUMMARY ===== */
+
+        space(70);
+
+        page.drawText(
+          `Income   Rs. ${Number(income).toLocaleString("en-IN")}`,
+          {
+            x: margin,
             y,
-            size: 11,
-            font: boldFont,
-            color: rgb(1, 1, 1),
-          });
+            size: 12,
+            font: bold,
+            color: rgb(0.3, 1, 0.6),
+          },
+        );
 
-          y -= 25;
-        });
+        y -= 18;
 
-        grandExpense += monthExpense;
-
-        drawDivider();
-
-        const incomeText = "Rs. " + income.toLocaleString("en-IN");
-        const expenseText = "Rs. " + monthExpense.toLocaleString("en-IN");
-        const balance = income - monthExpense;
-        const balanceText = "Rs. " + balance.toLocaleString("en-IN");
-
-        page.drawText("Income", {
+        page.drawText(`Expense  Rs. ${monthExpense.toLocaleString("en-IN")}`, {
           x: margin,
           y,
           size: 12,
-          font: boldFont,
-          color: rgb(0.3, 1, 0.6),
-        });
-
-        page.drawText(incomeText, {
-          x: rightAlign(incomeText),
-          y,
-          size: 12,
-          font: boldFont,
-          color: rgb(0.3, 1, 0.6),
-        });
-
-        y -= 20;
-
-        page.drawText("Expense", {
-          x: margin,
-          y,
-          size: 12,
-          font: boldFont,
+          font: bold,
           color: rgb(1, 0.3, 0.4),
         });
 
-        page.drawText(expenseText, {
-          x: rightAlign(expenseText),
-          y,
-          size: 12,
-          font: boldFont,
-          color: rgb(1, 0.3, 0.4),
-        });
+        y -= 18;
 
-        y -= 20;
-
-        page.drawText("Balance", {
+        const monthBalance = Number(income) - monthExpense;
+        page.drawText(`Balance  Rs. ${monthBalance.toLocaleString("en-IN")}`, {
           x: margin,
           y,
           size: 13,
-          font: boldFont,
-          color: rgb(1, 1, 1),
-        });
-
-        page.drawText(balanceText, {
-          x: rightAlign(balanceText),
-          y,
-          size: 13,
-          font: boldFont,
-          color: balance >= 0 ? rgb(0.3, 1, 0.6) : rgb(1, 0.3, 0.4),
+          font: bold,
+          color: monthBalance >= 0 ? rgb(0.3, 0.8, 1) : rgb(1, 0.4, 0.4),
         });
 
         y -= 40;
+      }
+
+      /* ================= OVERALL SUMMARY ================= */
+
+      space(120);
+      divider();
+
+      page.drawText("OVERALL SUMMARY", {
+        x: margin,
+        y,
+        size: 18,
+        font: bold,
+        color: rgb(1, 1, 1),
       });
 
-      // ===== OVERALL SUMMARY =====
-      drawSectionCard("Overall Summary");
+      y -= 30;
 
-      Object.keys(globalCategoryTotals).forEach((cat) => {
-        const totalText =
-          "Rs. " + globalCategoryTotals[cat].toLocaleString("en-IN");
+      for (const cat of Object.keys(categoryTotals)) {
+        space(22);
 
         page.drawText(cat, {
           x: margin,
           y,
           size: 11,
           font,
-          color: rgb(0.8, 0.8, 0.9),
+          color: rgb(0.8, 0.8, 0.8),
         });
 
-        page.drawText(totalText, {
-          x: rightAlign(totalText),
+        const txt = `Rs. ${categoryTotals[cat].toLocaleString("en-IN")}`;
+        page.drawText(txt, {
+          x: right(txt),
           y,
           size: 11,
-          font,
+          font: bold,
           color: rgb(1, 1, 1),
         });
 
-        y -= 18;
-      });
-
-      y -= 10;
-      drawDivider();
-
-      const finalBalance = grandIncome - grandExpense;
-
-      const totalIncomeText = "Rs. " + grandIncome.toLocaleString("en-IN");
-      const totalExpenseText = "Rs. " + grandExpense.toLocaleString("en-IN");
-      const finalBalanceText = "Rs. " + finalBalance.toLocaleString("en-IN");
-
-      page.drawText("Total Income", {
-        x: margin,
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(0.3, 1, 0.6),
-      });
-
-      page.drawText(totalIncomeText, {
-        x: rightAlign(totalIncomeText),
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(0.3, 1, 0.6),
-      });
+        y -= 16;
+      }
 
       y -= 20;
 
-      page.drawText("Total Expense", {
-        x: margin,
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(1, 0.3, 0.4),
-      });
+      const finalBalance = totalIncome - totalExpense;
 
-      page.drawText(totalExpenseText, {
-        x: rightAlign(totalExpenseText),
-        y,
-        size: 12,
-        font: boldFont,
-        color: rgb(1, 0.3, 0.4),
-      });
+      page.drawText(
+        `Total Income   Rs. ${totalIncome.toLocaleString("en-IN")}`,
+        { x: margin, y, size: 12, font: bold, color: rgb(0.3, 1, 0.6) },
+      );
 
-      y -= 20;
+      y -= 18;
 
-      page.drawText("Final Balance", {
-        x: margin,
-        y,
-        size: 14,
-        font: boldFont,
-        color: rgb(1, 1, 1),
-      });
+      page.drawText(
+        `Total Expense  Rs. ${totalExpense.toLocaleString("en-IN")}`,
+        { x: margin, y, size: 12, font: bold, color: rgb(1, 0.3, 0.4) },
+      );
 
-      page.drawText(finalBalanceText, {
-        x: rightAlign(finalBalanceText),
-        y,
-        size: 14,
-        font: boldFont,
-        color: finalBalance >= 0 ? rgb(0.3, 1, 0.6) : rgb(1, 0.3, 0.4),
-      });
+      y -= 22;
 
-      // Page numbers
-      const pages = pdfDoc.getPages();
-      pages.forEach((p, i) => {
-        const { width: w } = p.getSize();
-        p.drawText(`Page ${i + 1} of ${pages.length}`, {
-          x: w / 2 - 40,
-          y: 20,
+      page.drawText(
+        `Final Balance  Rs. ${finalBalance.toLocaleString("en-IN")}`,
+        {
+          x: margin,
+          y,
+          size: 16,
+          font: bold,
+          color: finalBalance >= 0 ? rgb(0.3, 0.8, 1) : rgb(1, 0.4, 0.4),
+        },
+      );
+
+      /* ================= FOOTER ================= */
+
+      pdfDoc.getPages().forEach((p, i) => {
+        p.drawText(`Page ${i + 1}`, {
+          x: p.getWidth() / 2 - 15,
+          y: 18,
           size: 9,
           font,
-          color: rgb(0.5, 0.5, 0.6),
+          color: rgb(0.5, 0.5, 0.5),
         });
       });
 
       const base64 = await pdfDoc.saveAsBase64();
+      const uri = FileSystem.documentDirectory + "MoneyMate_Report.pdf";
 
-      const fileUri = FileSystem.documentDirectory + "MoneyMate_Report.pdf";
-
-      await FileSystem.writeAsStringAsync(fileUri, base64, {
+      await FileSystem.writeAsStringAsync(uri, base64, {
         encoding: "base64",
       });
 
-      await Sharing.shareAsync(fileUri);
-    } catch (err) {
-      console.log("PDF ERROR:", err);
+      await Sharing.shareAsync(uri);
+    } catch (e) {
+      console.log("PDF ERROR", e);
     }
+  };
+
+  const shareWalletCode = async () => {
+    const walletId = await AsyncStorage.getItem("CURRENT_WALLET_ID");
+    if (!walletId) return;
+
+    await Clipboard.setStringAsync(walletId);
+
+    await Share.share({
+      message:
+        "Join my MoneyMate wallet 💰\n\n" +
+        "Open app → Join Wallet → Paste this code 👇\n\n" +
+        walletId,
+    });
   };
 
   return (
@@ -636,10 +551,20 @@ const generateInviteLink = async () => {
 
           <View style={{ flexDirection: "row" }}>
             <TouchableOpacity onPress={generatePDF}>
-              <Ionicons name="download-outline" size={24} color="white" />
+              <Ionicons name="download-outline" size={23} color="white" />
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{ marginLeft: 16 }}
+              onPress={shareWalletCode}
+            >
+              <Ionicons name="share-social-outline" size={24} color="white" />
             </TouchableOpacity>
 
-            <TouchableOpacity style={{ marginLeft: 15 }} onPress={generateInviteLink}>
+            {/* JOIN / PEOPLE */}
+            <TouchableOpacity
+              style={{ marginLeft: 16 }}
+              onPress={goToJoinWallet}
+            >
               <Ionicons name="people-outline" size={24} color="white" />
             </TouchableOpacity>
           </View>
@@ -647,7 +572,7 @@ const generateInviteLink = async () => {
 
         {/* Month List */}
         <FlatList
-          data={data}
+          data={dashboardData}
           keyExtractor={(item) => item.id}
           renderItem={renderItem}
           ListFooterComponent={<View style={{ height: 150 }} />}
@@ -658,8 +583,10 @@ const generateInviteLink = async () => {
         {/* Floating Add Button */}
         <TouchableOpacity
           style={styles.fab}
-          onPress={() => (navigation.navigate("AddMonthScreen"),
-          Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium))}
+          onPress={() => {
+            (navigation.navigate("AddMonthScreen"),
+              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+          }}
         >
           <LinearGradient
             colors={["#ff9966", "#ff5e62"]}

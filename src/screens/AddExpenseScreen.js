@@ -14,10 +14,11 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import * as ImagePicker from "expo-image-picker";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Toast from "react-native-toast-message";
 import * as Haptics from "expo-haptics";
-const STORAGE_KEY = "MONEY_MATE_DB";
+import { updateWallet } from "../storage/db";
+
+
 
 const categories = [
   { id: "1", name: "Grocery", icon: "🛒" },
@@ -34,8 +35,11 @@ const categories = [
   { id: "12", name: "Borrowed from Friends", icon: "🤝" },
   { id: "13", name: "Restaurant", icon: "🍽️" },
   { id: "14", name: "Health", icon: "🩺" },
-  { id: "15", name: "Other", icon: "📦" },
+  { id: "15", name: "Gadgets", icon: "📱" },
+  { id: "16", name: "Recharge", icon: "📶" },
+  { id: "17", name: "Other", icon: "📦" },
 ];
+
 
 export default function AddExpenseScreen({ navigation, route }) {
   const { month, expense } = route.params;
@@ -64,58 +68,70 @@ export default function AddExpenseScreen({ navigation, route }) {
       setImage(result.assets[0].uri);
     }
   };
+const saveExpense = async () => {
+  if (!title || !amount) return;
 
-  const saveExpense = async () => {
-    if (!title || !amount) return;
+  try {
+    await updateWallet((db) => {
+      if (!db.months || !db.months[month]) return db;
 
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
-    const db = json ? JSON.parse(json) : { months: {} };
+      if (isEdit) {
+        // ✏️ UPDATE EXISTING EXPENSE
+        db.months[month].transactions =
+          db.months[month].transactions.map((t) =>
+            t.id === expense.id
+              ? {
+                  ...t,
+                  title,
+                  amount: Number(amount),
+                  category: selectedCategory.name,
+                  categoryIcon: selectedCategory.icon,
+                  notes,
+                  accountType,
+                  image,
+                }
+              : t
+          );
+      } else {
+        // ➕ ADD NEW EXPENSE
+        const newExpense = {
+          id: Date.now().toString(),
+          title,
+          amount: Number(amount),
+          type: "expense",
+          category: selectedCategory.name,
+          categoryIcon: selectedCategory.icon,
+          notes,
+          accountType,
+          image,
+          date: new Date().toDateString(),
+        };
 
-    if (!db.months[month]) return;
+        db.months[month].transactions.push(newExpense);
+      }
 
-    if (isEdit) {
-      // ✏️ UPDATE EXISTING
-      db.months[month].transactions = db.months[month].transactions.map((t) =>
-        t.id === expense.id
-          ? {
-              ...t,
-              title,
-              amount: Number(amount),
-              category: selectedCategory.name,
-              categoryIcon: selectedCategory.icon,
-              notes,
-              accountType,
-              image,
-            }
-          : t,
-      );
-    } else {
-      // ➕ ADD NEW
-      const newExpense = {
-        id: Date.now().toString(),
-        title,
-        amount: Number(amount),
-        type: "expense",
-        category: selectedCategory.name,
-        categoryIcon: selectedCategory.icon,
-        notes,
-        accountType,
-        image,
-        date: new Date().toDateString(),
-      };
+      return db;
+    });
 
-      db.months[month].transactions.push(newExpense);
-    }
-
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(db));
     navigation.goBack();
+
     Toast.show({
       type: "success",
-      text1: "Expense Added",
+      text1: isEdit ? "Expense Updated" : "Expense Added",
       text2: "Your transaction was saved",
     });
-    Haptics.selectionAsync();
-  };
+
+    Haptics.notificationAsync(
+      Haptics.NotificationFeedbackType.Success
+    );
+  } catch (e) {
+    Toast.show({
+      type: "error",
+      text1: "Failed to save expense",
+    });
+  }
+};
+
 
   return (
     <SafeAreaView style={styles.container}>

@@ -6,6 +6,10 @@
         "distribution": "internal"
       }
     },
+    "development": {
+      "developmentClient": true,
+      "distribution": "internal"
+    },
     "production": {}
   }
 }

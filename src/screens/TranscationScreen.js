@@ -13,13 +13,9 @@ import { BlurView } from "expo-blur";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
 import { SafeAreaView } from "react-native-safe-area-context";
-import AsyncStorage from "@react-native-async-storage/async-storage";
-import { useFocusEffect } from "@react-navigation/native";
-import { useCallback } from "react";
 import Toast from "react-native-toast-message";
 import * as Haptics from "expo-haptics";
-
-const STORAGE_KEY = "MONEY_MATE_DB";
+import { getDB, updateWallet, listenToWallet } from "../storage/db";
 
 const TransactionScreen = ({ navigation, route }) => {
   const { month } = route.params;
@@ -30,26 +26,31 @@ const TransactionScreen = ({ navigation, route }) => {
   const [selected, setSelected] = useState(null);
   const [modalVisible, setModalVisible] = useState(false);
 
-  useFocusEffect(
-    useCallback(() => {
-      loadTransactions();
-    }, [month]),
-  );
+  useEffect(() => {
+    let unsubscribe;
 
-  const loadTransactions = async () => {
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
-    const db = json ? JSON.parse(json) : { months: {} };
-    if (db.months[month]) {
-      setTransactions(db.months[month].transactions || []);
-      setMonthIncome(db.months[month].income || 0);
-    }
-  };
+    const init = async () => {
+      unsubscribe = await listenToWallet((db) => {
+        if (db.months?.[month]) {
+          setTransactions(db.months[month].transactions || []);
+          setMonthIncome(db.months[month].income || 0);
+        } else {
+          setTransactions([]);
+          setMonthIncome(0);
+        }
+      });
+    };
 
-  const totalIncome = transactions
-    .filter((t) => t.type === "income")
-    .reduce((sum, t) => sum + t.amount, 0);
+    init();
 
-  const totalExpense = transactions.reduce((sum, t) => sum + t.amount, 0);
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [month]);
+
+  const totalExpense = transactions
+    .filter((t) => t.type === "expense")
+    .reduce((sum, t) => sum + Number(t.amount), 0);
 
   const balance = monthIncome - totalExpense;
 
@@ -59,25 +60,24 @@ const TransactionScreen = ({ navigation, route }) => {
   };
 
   const deleteItem = async () => {
+    await updateWallet((db) => {
+      if (!db.months?.[month]) return db;
 
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
-    const db = JSON.parse(json);
+      db.months[month].transactions = db.months[month].transactions.filter(
+        (t) => t.id !== selected.id,
+      );
 
-    db.months[month].transactions = db.months[month].transactions.filter(
-      (t) => t.id !== selected.id,
-    );
-
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-    setTransactions(db.months[month].transactions);
-    setModalVisible(false);
-    Toast.show({
-      type: "error",
-      text1: "Your Transaction was deleted succesfully!",
+      return db;
     });
-    Haptics.notificationAsync(
-  Haptics.NotificationFeedbackType.Success
-);
 
+    setModalVisible(false);
+
+    Toast.show({
+      type: "success",
+      text1: "Transaction deleted",
+    });
+
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   const renderItem = ({ item }) => (
@@ -153,7 +153,7 @@ const TransactionScreen = ({ navigation, route }) => {
         {/* List */}
         <FlatList
           data={transactions}
-          keyExtractor={(item) => item.id}
+          keyExtractor={(item) => item.id?.toString()}
           renderItem={renderItem}
           contentContainerStyle={{ padding: 20 }}
           ListFooterComponent={<View style={{ height: 150 }} />}
@@ -163,8 +163,8 @@ const TransactionScreen = ({ navigation, route }) => {
         <TouchableOpacity
           style={styles.fab}
           onPress={() => {
-            (navigation.navigate("AddExpenseScreen", { month }),
-              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium));
+            navigation.navigate("AddExpenseScreen", { month });
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
           }}
         >
           <LinearGradient
@@ -190,12 +190,11 @@ const TransactionScreen = ({ navigation, route }) => {
                       <View style={{ flexDirection: "row" }}>
                         <TouchableOpacity
                           onPress={() => {
-                            (setModalVisible(false),
-                              navigation.navigate("AddExpenseScreen", {
-                                month,
-                                expense: selected,
-                              }));
-
+                            setModalVisible(false);
+                            navigation.navigate("AddExpenseScreen", {
+                              month,
+                              expense: selected,
+                            });
                             Haptics.selectionAsync();
                           }}
                         >

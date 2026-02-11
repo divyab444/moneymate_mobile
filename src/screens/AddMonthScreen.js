@@ -13,11 +13,9 @@ import { SafeAreaView } from "react-native-safe-area-context";
 import DateTimePicker from "@react-native-community/datetimepicker";
 import { LinearGradient } from "expo-linear-gradient";
 import { Ionicons } from "@expo/vector-icons";
-import AsyncStorage from "@react-native-async-storage/async-storage";
 import Toast from "react-native-toast-message";
 import * as Haptics from "expo-haptics";
-
-const STORAGE_KEY = "MONEY_MATE_DB";
+import { updateWallet } from "../storage/db";
 
 const AddMonthScreen = ({ navigation }) => {
   const [date, setDate] = useState(new Date());
@@ -32,26 +30,33 @@ const AddMonthScreen = ({ navigation }) => {
   const saveMonth = async () => {
     if (!income) return;
 
-    const json = await AsyncStorage.getItem(STORAGE_KEY);
-    const db = json ? JSON.parse(json) : { months: {} };
+    try {
+      await updateWallet((db) => {
+        if (!db.months) db.months = {};
 
-    if (!db.months[formattedMonth]) {
-      db.months[formattedMonth] = {
-        income: Number(income),
-        transactions: [],
-      };
-    } else {
-      db.months[formattedMonth].income = Number(income);
+        db.months[formattedMonth] = {
+          income: Number(income),
+          transactions: db.months[formattedMonth]?.transactions || [],
+        };
+
+        return db;
+      });
+
+      navigation.goBack();
+
+      Toast.show({
+        type: "success",
+        text1: "Income Added",
+        text2: "Your transaction was saved",
+      });
+
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } catch (e) {
+      Toast.show({
+        type: "error",
+        text1: "Failed to save month",
+      });
     }
-
-    await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(db));
-    navigation.goBack();
-    Toast.show({
-      type: "success",
-      text1: "Income Added",
-      text2: "Your transaction was saved",
-    });
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   return (

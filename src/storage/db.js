@@ -1,28 +1,72 @@
 import AsyncStorage from "@react-native-async-storage/async-storage";
 import { db } from "../screens/firebase";
-import { doc, getDoc, setDoc, onSnapshot } from "firebase/firestore";
-import { v4 as uuidv4 } from "uuid";
+import {
+  doc,
+  getDoc,
+  setDoc,
+  onSnapshot,
+  updateDoc,
+  deleteField,
+} from "firebase/firestore";
 
 const WALLET_KEY = "CURRENT_WALLET_ID";
+
+const generateId = () => {
+  return (
+    "wallet_" +
+    Date.now().toString(36) +
+    Math.random().toString(36).substring(2, 8)
+  );
+};
 
 /* =============================
    INIT WALLET
 ============================= */
 export const initWallet = async () => {
-  let walletId = await AsyncStorage.getItem(WALLET_KEY);
+  let walletId = await AsyncStorage.getItem("CURRENT_WALLET_ID");
 
   if (!walletId) {
-    walletId = uuidv4();
+    walletId = generateId();
+    await AsyncStorage.setItem("CURRENT_WALLET_ID", walletId);
+  }
 
-    await setDoc(doc(db, "wallets", walletId), {
+  const walletRef = doc(db, "wallets", walletId);
+  const snap = await getDoc(walletRef);
+
+  if (!snap.exists()) {
+    await setDoc(walletRef, {
       months: {},
       createdAt: Date.now(),
     });
-
-    await AsyncStorage.setItem(WALLET_KEY, walletId);
   }
 
   return walletId;
+};
+
+export const deleteMonthFromWallet = async (monthName) => {
+  try {
+    const walletRef = await getWalletRef();
+
+    await updateDoc(walletRef, {
+      [`months.${monthName}`]: deleteField(),
+    });
+  } catch (e) {
+    console.log("deleteMonthFromWallet error:", e);
+  }
+};
+
+export const updateWallet = async (updater) => {
+  try {
+    const walletRef = await getWalletRef();
+    const snap = await getDoc(walletRef);
+
+    const data = snap.exists() ? snap.data() : { months: {} };
+    const updated = updater(data);
+
+    await setDoc(walletRef, updated, { merge: true });
+  } catch (e) {
+    console.log("updateWallet error:", e);
+  }
 };
 
 /* =============================
@@ -57,10 +101,12 @@ export const getDB = async () => {
    SAVE DB (Safe Write)
 ============================= */
 export const saveDB = async (data) => {
-  const walletRef = await getWalletRef();
-
-  // setDoc with merge prevents crash
-  await setDoc(walletRef, data, { merge: true });
+  try {
+    const walletRef = await getWalletRef();
+    await setDoc(walletRef, data, { merge: true });
+  } catch (e) {
+    console.log("saveDB error:", e);
+  }
 };
 
 /* =============================
@@ -71,7 +117,7 @@ export const listenToWallet = async (callback) => {
 
   return onSnapshot(walletRef, (snapshot) => {
     if (snapshot.exists()) {
-      callback(snapshot.data());
+      callback(snapshot.data() || { months: {} });
     }
   });
 };
